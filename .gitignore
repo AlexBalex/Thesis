@@ -4,4 +4,5 @@ convert.py
 cz_eeg1_data.csv
 cz_eeg2_data.csv
 cz_eeg16_data.csv
+test.csv
 .venv
