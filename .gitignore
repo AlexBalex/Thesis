@@ -1,8 +1,6 @@
 .vscode/
-1_20160518.mat
 convert.py
-cz_eeg1_data.csv
-cz_eeg2_data.csv
-cz_eeg16_data.csv
-test.csv
+convert2.py
+csv_files
+mat_files
 .venv
