@@ -4,15 +4,14 @@ from matplotlib.animation import FuncAnimation
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.figure import Figure
 from scipy.io import loadmat
-from numpy import abs, where
-from numpy.fft import fft
+from numpy import abs, where, fft
 import random
 import os
 
 class CsvLoaderApp:
     def convert_mat_to_csv(self):
-        mat_files_dir = '/home/alex/UVT/thesis/mat_files'
-        csv_files_dir = '/home/alex/UVT/thesis/csv_files'
+        mat_files_dir = '/home/alex/UVT/Thesis/mat_files'
+        csv_files_dir = '/home/alex/UVT/Thesis/csv_files'
 
         file_path = filedialog.askopenfilename(initialdir=mat_files_dir,
                                             filetypes=[("MAT-files", "*.mat")],
@@ -25,7 +24,7 @@ class CsvLoaderApp:
 
         # Extract session names that follow the pattern '_eeg1' to '_eeg24'
         session_keys = [key for key in mat_contents if 'eeg' in key]
-        session_names = sorted(session_keys)  # Sort sessions if needed
+        session_names = sorted(session_keys)  # Sort sessions
 
         if not session_names:
             messagebox.showerror("Error", "No EEG sessions found in the selected .mat file.")
@@ -100,7 +99,7 @@ class CsvLoaderApp:
 
         # Convert MAT to CSV button
         self.convert_button = Button(control_frame, text="Convert MAT to CSV", command=self.convert_mat_to_csv)
-        self.convert_button.grid(row=0, column=3, padx=5)  # Notice column=3 for the new button
+        self.convert_button.grid(row=0, column=3, padx=5) 
 
         # Status label
         self.status_label = Label(control_frame, text="")
@@ -108,10 +107,10 @@ class CsvLoaderApp:
 
         # Emotion label and field
         self.emotion_label = Label(control_frame, text="Emotion: ")
-        self.emotion_label.grid(row=0, column=4, sticky='e')  # Moved to column=4
+        self.emotion_label.grid(row=0, column=4, sticky='e') 
 
         self.emotion_field = Label(control_frame, text="")
-        self.emotion_field.grid(row=0, column=5)  # Moved to column=5
+        self.emotion_field.grid(row=0, column=5) 
 
 
         # Frame for the plot
@@ -119,7 +118,7 @@ class CsvLoaderApp:
         plot_frame.pack(fill=BOTH, expand=True)
 
         # Placeholder figure and canvas
-        self.figure = Figure(figsize=(5, 4), dpi=100)
+        self.figure = Figure()
         self.canvas = FigureCanvasTkAgg(self.figure, master=plot_frame)
         self.canvas.get_tk_widget().pack(fill=BOTH, expand=True)
 
@@ -127,7 +126,7 @@ class CsvLoaderApp:
         self.toolbar.update()
    
     def load_csv(self):
-        file_path = filedialog.askopenfilename(initialdir='/home/alex/UVT/thesis/csv_files',filetypes=[("CSV files", "*.csv")],title="Open CSV File")
+        file_path = filedialog.askopenfilename(initialdir='/home/alex/UVT/Thesis/csv_files',filetypes=[("CSV files", "*.csv")],title="Open CSV File")
         if file_path: 
             # Stop any existing animation
             if self.animation is not None and self.animation.event_source is not None:
@@ -142,20 +141,20 @@ class CsvLoaderApp:
             if self.canvas and hasattr(self.canvas, 'draw') and callable(self.canvas.draw):
                 self.canvas.draw()
 
-            self.df = read_csv(file_path)
+            self.DataFrame = read_csv(file_path)
             filename = file_path.split("/")[-1]
             self.status_label.config(text=f"Successfully loaded {filename}", fg="green") 
             self.emotion_field.config(text="")
 
     def make_diagram(self):
-        if self.df is not None:
-            numeric_df = self.df.select_dtypes(include=['number'])
+        if self.DataFrame is not None:
+            numeric_df = self.DataFrame.select_dtypes(include=['number'])
             if not numeric_df.empty:
-                # Perform Fourier transform on the first numeric column
+                # Perform Fourier transform
                 data_to_transform = numeric_df.iloc[:, 0].values
                 fourier_transformed = fft.fft(data_to_transform)
                 n = len(data_to_transform)
-                freq_bins = fft.fftfreq(n, d=1)  # Assuming a sample rate of 1 for 'd'
+                freq_bins = fft.fftfreq(n, d=1)
                 
                 # Filter out only the positive frequencies for visualization
                 positive_freq_indices = where(freq_bins >= 0)
@@ -204,7 +203,6 @@ class CsvLoaderApp:
                 self.status_label.config(text="No numeric columns found for Fourier transformation.", fg="red")
         else:
             self.status_label.config(text="No CSV file loaded.", fg="red")
-
 
     def update_emotion(self):
         emotions = ['Happy', 'Sad', 'Fear', 'Neutral']
