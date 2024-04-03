@@ -1,4 +1,4 @@
-from tkinter import filedialog, Frame, messagebox, simpledialog, Tk, Button, Label, BOTH
+from tkinter import Text, Toplevel, filedialog, Frame, messagebox, simpledialog, Tk, Button, Label, BOTH
 from pandas import read_csv, concat, DataFrame
 from matplotlib.animation import FuncAnimation
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
@@ -9,10 +9,28 @@ import random
 import os
 
 class CsvLoaderApp:
-    def convert_mat_to_csv(self):
-        mat_files_dir = '/home/alex/UVT/Thesis/mat_files'
-        csv_files_dir = '/home/alex/UVT/Thesis/csv_files'
 
+    def center_window_on_parent(self,parent_window, child_window, width, height):
+        """
+        Center the child_window on the parent_window with the specified width and height.
+        """
+        # Get the parent window's geometry
+        parent_x = parent_window.winfo_x()
+        parent_y = parent_window.winfo_y()
+        parent_width = parent_window.winfo_width()
+        parent_height = parent_window.winfo_height()
+
+        # Calculate the position to center the child window on the parent window
+        x = parent_x + (parent_width - width) // 2
+        y = parent_y + (parent_height - height) // 2
+
+        # Apply the calculated position and size to the child window
+        child_window.geometry(f"{width}x{height}+{x}+{y}")
+
+    def convert_mat_to_csv(self):
+        mat_files_dir = '/home/alex/UVT/thesis/mat_files'
+        csv_files_dir = '/home/alex/UVT/thesis/csv_files'
+        
         file_path = filedialog.askopenfilename(initialdir=mat_files_dir,
                                             filetypes=[("MAT-files", "*.mat")],
                                             title="Open MAT File")
@@ -34,10 +52,10 @@ class CsvLoaderApp:
         session_names = sorted(session_keys, key=lambda name: int(name.split('eeg')[1]))
         session_number_to_name = {i + 1: name for i, name in enumerate(session_names)}
 
-
         # Ask the user to select a session number
         session_number = simpledialog.askinteger("Select Session Number", "Enter a session number to convert (1 to 24):",
                                                 parent=self.root, minvalue=1, maxvalue=len(session_names))
+                                                
         if session_number is None or session_number not in session_number_to_name:
             return  # User cancelled or entered an invalid number
 
@@ -82,8 +100,16 @@ class CsvLoaderApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Emotion detection")
-        self.root.geometry("800x640")  # Adjust size as needed
-        self.animation= None
+        window_width = 800
+        window_height = 640
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        center_x = int(screen_width / 2 - window_width / 2)
+        center_y = int(screen_height / 2 - window_height / 2)
+        self.root.geometry(f'{window_width}x{window_height}+{center_x}+{center_y}')
+        self.root.resizable(False, False)
+        self.animation = None
+        self.DataFrame = None
 
         # Frame for the buttons and labels
         control_frame = Frame(self.root)
@@ -91,15 +117,15 @@ class CsvLoaderApp:
 
         # Load CSV button
         self.load_button = Button(control_frame, text="Load CSV", command=self.load_csv)
-        self.load_button.grid(row=0, column=0, padx=5)
+        self.load_button.grid(row=0, column=1, padx=5)
 
         # Make Diagram button
         self.diagram_button = Button(control_frame, text="Make Diagram", command=self.make_diagram)
-        self.diagram_button.grid(row=0, column=1, padx=5)
+        self.diagram_button.grid(row=0, column=2, padx=5)
 
         # Convert MAT to CSV button
         self.convert_button = Button(control_frame, text="Convert MAT to CSV", command=self.convert_mat_to_csv)
-        self.convert_button.grid(row=0, column=3, padx=5) 
+        self.convert_button.grid(row=0, column=0, padx=5) 
 
         # Status label
         self.status_label = Label(control_frame, text="")
@@ -107,10 +133,14 @@ class CsvLoaderApp:
 
         # Emotion label and field
         self.emotion_label = Label(control_frame, text="Emotion: ")
-        self.emotion_label.grid(row=0, column=4, sticky='e') 
+        self.emotion_label.grid(row=0, column=3, sticky='e') 
 
         self.emotion_field = Label(control_frame, text="")
-        self.emotion_field.grid(row=0, column=5) 
+        self.emotion_field.grid(row=0, column=4) 
+
+        # Help button
+        self.help_button = Button(self.root, text="?", command=self.show_help, font=('Arial', 10, 'bold'), padx=3, pady=0)
+        self.help_button.pack(side='top', anchor='ne', padx=10, pady=5)  # Increase padding if needed to position correctly
 
 
         # Frame for the plot
@@ -126,7 +156,7 @@ class CsvLoaderApp:
         self.toolbar.update()
    
     def load_csv(self):
-        file_path = filedialog.askopenfilename(initialdir='/home/alex/UVT/Thesis/csv_files',filetypes=[("CSV files", "*.csv")],title="Open CSV File")
+        file_path = filedialog.askopenfilename(initialdir='/home/alex/UVT/thesis/csv_files',filetypes=[("CSV files", "*.csv")],title="Open CSV File")
         if file_path: 
             # Stop any existing animation
             if self.animation is not None and self.animation.event_source is not None:
@@ -147,7 +177,9 @@ class CsvLoaderApp:
             self.emotion_field.config(text="")
 
     def make_diagram(self):
-        if self.DataFrame is not None:
+        if self.DataFrame is None:  # Check if the DataFrame has not been loaded
+            self.status_label.config(text="No CSV file loaded. Please load a CSV file first.", fg="red")
+        else:
             numeric_df = self.DataFrame.select_dtypes(include=['number'])
             if not numeric_df.empty:
                 # Perform Fourier transform
@@ -201,8 +233,6 @@ class CsvLoaderApp:
 
             else:
                 self.status_label.config(text="No numeric columns found for Fourier transformation.", fg="red")
-        else:
-            self.status_label.config(text="No CSV file loaded.", fg="red")
 
     def update_emotion(self):
         emotions = ['Happy', 'Sad', 'Fear', 'Neutral']
@@ -214,6 +244,32 @@ class CsvLoaderApp:
         }
         chosen_emotion = random.choice(emotions)
         self.emotion_field.config(text=chosen_emotion, fg=emotion_color[chosen_emotion])
+
+    def show_help(self):
+        # Create a new top-level window
+        help_window = Toplevel(self.root)
+        help_window.title("Help Information")
+        # Set the size of the help window and center it on the parent window
+        help_window_width = 800
+        help_window_height = 250
+        self.center_window_on_parent(self.root, help_window, help_window_width, help_window_height)
+
+        help_window.resizable(False, False)  # Make the help window unresizable
+        # Add a text widget to the help window
+        text = Text(help_window, wrap='word')
+        text.insert('1.0', (
+            "How to use the application:\n\n"
+            "Press the buttons in the following order:\n\n"
+            "1. Convert MAT to CSV: Convert a chosen session from a .mat file to a .csv file.\n\n"
+            "2. Load CSV: Click 'Load CSV' then select a csv file from a folder to load.\n\n"
+            "3. Make Diagram: With a CSV file loaded, click the 'Make Diagram' button to generate a fast fourier diagram and to get the emotion for the respective .csv file.\n"
+        ))
+        text.config(state='disabled')  # Make the text widget read-only
+        text.pack(expand=True, fill='both', padx=10, pady=10)
+
+        # Optionally, add a close button
+        close_button = Button(help_window, text="Close", command=help_window.destroy)
+        close_button.pack(pady=5)
 
 # Create the Tkinter window
 root = Tk()
