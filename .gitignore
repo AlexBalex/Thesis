@@ -1,6 +1,10 @@
 .vscode/
 convert.py
 convert2.py
+convert3.py
+playground
 csv_files
+csv_files_smooth
+eeg_feature_smooth
 mat_files
 .venv
