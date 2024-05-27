@@ -8,3 +8,5 @@ csv_files_smooth
 eeg_feature_smooth
 mat_files
 .venv
+__pycache__
+processed_eeg_data_de_LDS.pkl

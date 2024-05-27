@@ -3,100 +3,14 @@ from pandas import read_csv, concat, DataFrame
 from matplotlib.animation import FuncAnimation
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.figure import Figure
+from sklearn.preprocessing import StandardScaler
 from scipy.io import loadmat
 from numpy import abs, where, fft
 import random
 import os
+from model_training import EmotionDetector
 
 class CsvLoaderApp:
-
-    def center_window_on_parent(self,parent_window, child_window, width, height):
-        """
-        Center the child_window on the parent_window with the specified width and height.
-        """
-        # Get the parent window's geometry
-        parent_x = parent_window.winfo_x()
-        parent_y = parent_window.winfo_y()
-        parent_width = parent_window.winfo_width()
-        parent_height = parent_window.winfo_height()
-
-        # Calculate the position to center the child window on the parent window
-        x = parent_x + (parent_width - width) // 2
-        y = parent_y + (parent_height - height) // 2
-
-        # Apply the calculated position and size to the child window
-        child_window.geometry(f"{width}x{height}+{x}+{y}")
-
-    def convert_mat_to_csv(self):
-        mat_files_dir = '/home/alex/UVT/thesis/mat_files'
-        csv_files_dir = '/home/alex/UVT/thesis/csv_files'
-        
-        file_path = filedialog.askopenfilename(initialdir=mat_files_dir,
-                                            filetypes=[("MAT-files", "*.mat")],
-                                            title="Open MAT File")
-        if not file_path:
-            return  # User cancelled the file selection
-
-        # Load the .mat file
-        mat_contents = loadmat(file_path)
-
-        # Extract session names that follow the pattern '_eeg1' to '_eeg24'
-        session_keys = [key for key in mat_contents if 'eeg' in key]
-        session_names = sorted(session_keys)  # Sort sessions
-
-        if not session_names:
-            messagebox.showerror("Error", "No EEG sessions found in the selected .mat file.")
-            return
-
-        # Sort session names numerically based on the number part of the session name
-        session_names = sorted(session_keys, key=lambda name: int(name.split('eeg')[1]))
-        session_number_to_name = {i + 1: name for i, name in enumerate(session_names)}
-
-        # Ask the user to select a session number
-        session_number = simpledialog.askinteger("Select Session Number", "Enter a session number to convert (1 to 24):",
-                                                parent=self.root, minvalue=1, maxvalue=len(session_names))
-                                                
-        if session_number is None or session_number not in session_number_to_name:
-            return  # User cancelled or entered an invalid number
-
-        session_name = session_number_to_name[session_number]
-
-        # Get the data for the specified session
-        session_data = mat_contents[session_name]
-
-        if session_data is None:
-            messagebox.showerror("Error", f"No data found for session '{session_name}'")
-            return
-
-        # Proceed with the conversion process
-        dataframes_list = []
-        for i, array in enumerate(session_data):
-            array_df = DataFrame(array)
-            array_df.columns = [f"{i}_{col}" for col in array_df.columns]
-            dataframes_list.append(array_df)
-
-
-
-        initial_filename = f"{os.path.basename(session_name)}_data.csv"  # Default filename for saving
-        csv_filename = filedialog.asksaveasfilename(initialdir=csv_files_dir,
-                                                    defaultextension=".csv",
-                                                    filetypes=[("CSV files", "*.csv")],
-                                                    title="Save the session as CSV",
-                                                    initialfile=initial_filename)
-
-        if not csv_filename:
-            return  # User cancelled the save file dialog
-        
-        all_arrays_df = concat(dataframes_list, axis=1)
-        all_arrays_df.to_csv(csv_filename, index=False)
-
-        # Calculate the size of the CSV file
-        file_size_bytes = os.path.getsize(csv_filename)
-        file_size_megabytes = file_size_bytes / (1024 * 1024)
-
-        csv_filename_only = os.path.basename(csv_filename)
-        messagebox.showinfo("Success", f"The session data has been successfully saved as '{csv_filename_only}'.\nSize: {file_size_megabytes:.2f} MB")
-
     def __init__(self, root):
         self.root = root
         self.root.title("Emotion detection")
@@ -110,6 +24,7 @@ class CsvLoaderApp:
         self.root.resizable(False, False)
         self.animation = None
         self.DataFrame = None
+        self.detector = EmotionDetector("processed_eeg_data_de_LDS.pkl")
 
         # Frame for the buttons and labels
         control_frame = Frame(self.root)
@@ -141,7 +56,6 @@ class CsvLoaderApp:
         # Help button
         self.help_button = Button(self.root, text="?", command=self.show_help, font=('Arial', 10, 'bold'), padx=3, pady=0)
         self.help_button.pack(side='top', anchor='ne', padx=10, pady=5)  # Increase padding if needed to position correctly
-
 
         # Frame for the plot
         plot_frame = Frame(self.root)
@@ -234,16 +148,110 @@ class CsvLoaderApp:
             else:
                 self.status_label.config(text="No numeric columns found for Fourier transformation.", fg="red")
 
+
     def update_emotion(self):
-        emotions = ['Happy', 'Sad', 'Fear', 'Neutral']
-        emotion_color = {
-            'Happy': 'green',
-            'Sad': 'blue',
-            'Fear': 'purple',
-            'Neutral': 'gray'
-        }
-        chosen_emotion = random.choice(emotions)
-        self.emotion_field.config(text=chosen_emotion, fg=emotion_color[chosen_emotion])
+        if self.DataFrame is not None:
+            # Preprocess the data to match the expected format for the model
+            numeric_df = self.DataFrame.select_dtypes(include=['number'])
+            # print("Shape of numeric_df:", numeric_df.shape)  # Debugging print to check the shape
+            if not numeric_df.empty:
+                max_cols = 320  # Number of features before flattening
+                num_rows = numeric_df.shape[0]
+                expected_features = max_cols * num_rows
+                # print("Expected number of features:", expected_features)  # Debugging print
+
+                # Pad the DataFrame
+                # padded_features = numeric_df.reindex(columns=range(max_cols), fill_value=0)
+                padded_features = numeric_df.join(DataFrame(0, index=numeric_df.index, columns=range(numeric_df.shape[1], max_cols)))
+                # Flatten the DataFrame
+                flattened_features = padded_features.values.flatten()
+                # print("Number of features after flattening:", len(flattened_features))  # Debugging print
+
+                # Ensure the number of features match
+                if len(flattened_features) != expected_features:
+                    print(f"Warning: Number of features {len(flattened_features)} does not match expected {expected_features}.")
+
+                emotion = self.detector.predict_emotion(flattened_features)
+                # print(f"Predicted emotion: {emotion}")  # Debugging print for the predicted emotion
+
+                emotion_label_map = {0: 'Neutral', 1: 'Sad', 2: 'Fear', 3: 'Happy'}
+                emotion_color = {
+                    'Happy': 'green',
+                    'Sad': 'blue',
+                    'Fear': 'purple',
+                    'Neutral': 'gray'
+                }
+                chosen_emotion = emotion_label_map.get(emotion, 'Unknown')
+                self.emotion_field.config(text=chosen_emotion, fg=emotion_color.get(chosen_emotion, 'black'))
+
+
+    def convert_mat_to_csv(self):
+        mat_files_dir = '/home/alex/UVT/thesis/mat_files'
+        csv_files_dir = '/home/alex/UVT/thesis/csv_files'
+        
+        file_path = filedialog.askopenfilename(initialdir=mat_files_dir,
+                                            filetypes=[("MAT-files", "*.mat")],
+                                            title="Open MAT File")
+        if not file_path:
+            return  # User cancelled the file selection
+
+        # Load the .mat file
+        mat_contents = loadmat(file_path)
+
+        # Extract session names that follow the pattern '_eeg1' to '_eeg24'
+        session_keys = [key for key in mat_contents if 'eeg' in key]
+        session_names = sorted(session_keys)  # Sort sessions
+
+        if not session_names:
+            messagebox.showerror("Error", "No EEG sessions found in the selected .mat file.")
+            return
+
+        # Sort session names numerically based on the number part of the session name
+        session_names = sorted(session_keys, key=lambda name: int(name.split('eeg')[1]))
+        session_number_to_name = {i + 1: name for i, name in enumerate(session_names)}
+
+        # Ask the user to select a session number
+        session_number = simpledialog.askinteger("Select Session Number", "Enter a session number to convert (1 to 24):",
+                                                parent=self.root, minvalue=1, maxvalue=len(session_names))
+                                                
+        if session_number is None or session_number not in session_number_to_name:
+            return  # User cancelled or entered an invalid number
+
+        session_name = session_number_to_name[session_number]
+
+        # Get the data for the specified session
+        session_data = mat_contents[session_name]
+
+        if session_data is None:
+            messagebox.showerror("Error", f"No data found for session '{session_name}'")
+            return
+
+        # Proceed with the conversion process
+        dataframes_list = []
+        for i, array in enumerate(session_data):
+            array_df = DataFrame(array)
+            array_df.columns = [f"{i}_{col}" for col in array_df.columns]
+            dataframes_list.append(array_df)
+
+        initial_filename = f"{os.path.basename(session_name)}_data.csv"  # Default filename for saving
+        csv_filename = filedialog.asksaveasfilename(initialdir=csv_files_dir,
+                                                    defaultextension=".csv",
+                                                    filetypes=[("CSV files", "*.csv")],
+                                                    title="Save the session as CSV",
+                                                    initialfile=initial_filename)
+
+        if not csv_filename:
+            return  # User cancelled the save file dialog
+        
+        all_arrays_df = concat(dataframes_list, axis=1)
+        all_arrays_df.to_csv(csv_filename, index=False)
+
+        # Calculate the size of the CSV file
+        file_size_bytes = os.path.getsize(csv_filename)
+        file_size_megabytes = file_size_bytes / (1024 * 1024)
+
+        csv_filename_only = os.path.basename(csv_filename)
+        messagebox.showinfo("Success", f"The session data has been successfully saved as '{csv_filename_only}'.\nSize: {file_size_megabytes:.2f} MB")
 
     def show_help(self):
         # Create a new top-level window
@@ -270,6 +278,23 @@ class CsvLoaderApp:
         # Optionally, add a close button
         close_button = Button(help_window, text="Close", command=help_window.destroy)
         close_button.pack(pady=5)
+
+    def center_window_on_parent(self, parent_window, child_window, width, height):
+        """
+        Center the child_window on the parent_window with the specified width and height.
+        """
+        # Get the parent window's geometry
+        parent_x = parent_window.winfo_x()
+        parent_y = parent_window.winfo_y()
+        parent_width = parent_window.winfo_width()
+        parent_height = parent_window.winfo_height()
+
+        # Calculate the position to center the child window on the parent window
+        x = parent_x + (parent_width - width) // 2
+        y = parent_y + (parent_height - height) // 2
+
+        # Apply the calculated position and size to the child window
+        child_window.geometry(f"{width}x{height}+{x}+{y}")
 
 # Create the Tkinter window
 root = Tk()
