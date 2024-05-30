@@ -1,129 +1,213 @@
-import numpy as np
-import pandas as pd
-from scipy import signal
-from sklearn.preprocessing import MinMaxScaler
-from sklearn.decomposition import PCA
+import os
+import random
 import pickle
+import pandas as pd
+import numpy as np
+from scipy.signal import resample, welch
+from scipy.stats import skew, kurtosis
+from scipy.fft import fft
+from tqdm import tqdm
 
-def load_model_and_preprocessors(model_path, pca_path, scaler_path):
-    with open(model_path, 'rb') as f:
-        model = pickle.load(f)
-    with open(pca_path, 'rb') as f:
-        pca = pickle.load(f)
-    with open(scaler_path, 'rb') as f:
-        scaler = pickle.load(f)
-    return model, pca, scaler
+epsilon = 1e-12  # small constant to prevent log(0)
 
-def process_and_extract_features(df):
-    fs_original = 1000  # Original sampling frequency
-    fs_new = 200  # New target sampling frequency
-    nyquist_new = fs_new / 2
+# Function to calculate Euclidean distance
+def euclidean_distance(x, y):
+    return np.sqrt(np.sum((x - y) ** 2))
 
-    # Design a low-pass filter for downsampling (to avoid aliasing)
-    b_downsample, a_downsample = signal.butter(5, nyquist_new / (fs_original / 2), btype='low')
+# Function to compute power spectral density
+def power_spectral_density(signal, fs=200):
+    freqs, psd = welch(signal, fs)
+    return freqs, psd
 
-    # Design bandpass filter for the target frequency range (1 Hz to 75 Hz)
-    lowcut = 1.0  # Low cut-off frequency
-    highcut = 75.0  # High cut-off frequency
-    low = lowcut / nyquist_new
-    high = highcut / nyquist_new
-    b_bandpass, a_bandpass = signal.butter(5, [low, high], btype='band')
+# Function to compute spectral entropy
+def spectral_entropy(psd):
+    psd_norm = psd / np.sum(psd)
+    return -np.sum(psd_norm * np.log(psd_norm + epsilon))
 
-    # Initialize container for downsampled and filtered data
-    processed_data_df = pd.DataFrame()
+# Function to compute differential entropy
+def differential_entropy(signal):
+    sigma2 = np.var(signal)
+    return 0.5 * np.log(2 * np.pi * np.e * sigma2)
 
-    # Minimum length required for filtfilt to avoid ValueError
-    min_length = 33
+# Function to compute the Logarithmic Covariance Matrix features
+def compute_log_cov_features(statistics):
+    features = np.array(list(statistics.values()))
+    features = features[:144]  # Ignore the last 6 features to get 144 features
+    features_matrix = features.reshape((12, 12))
+    
+    cov_matrix = np.cov(features_matrix)
+    log_cov_matrix = np.log(np.abs(cov_matrix) + epsilon)
+    
+    upper_triangular_indices = np.triu_indices_from(log_cov_matrix)
+    log_cov_features = log_cov_matrix[upper_triangular_indices]
+    
+    return log_cov_features
 
-    # Process each channel
-    for column in df.columns:
-        data = df[column].values  # Extract data for each channel
-
-        if len(data) < min_length:
-            raise ValueError(f"Data in column '{column}' is too short for filtering")
-
-        # Apply the low-pass filter for downsampling
-        filtered_data_for_downsampling = signal.filtfilt(b_downsample, a_downsample, data)
-
-        # Decimate (downsample) - take every 5th sample
-        downsampled_data = filtered_data_for_downsampling[::5]
-
-        # Apply the bandpass filter
-        final_filtered_data = signal.filtfilt(b_bandpass, a_bandpass, downsampled_data)
+# Function to extract various statistics from each window
+def extract_statistics(window):
+    stats = {}
+    
+    for col in window.columns:
+        signal = window[col].values
+        stats[f'mean_{col}'] = np.mean(signal)
+        stats[f'std_{col}'] = np.std(signal)
+        stats[f'skew_{col}'] = skew(signal)
+        stats[f'kurtosis_{col}'] = kurtosis(signal)
+        stats[f'max_{col}'] = np.max(signal)
+        stats[f'min_{col}'] = np.min(signal)
         
-        # Store in new dataframe
-        processed_data_df[column] = final_filtered_data
+        # Derivatives (difference between halves)
+        half_len = len(signal) // 2
+        first_half = signal[:half_len]
+        second_half = signal[half_len:]
+        stats[f'deriv_max_{col}'] = np.max(second_half) - np.max(first_half)
+        stats[f'deriv_min_{col}'] = np.min(second_half) - np.min(first_half)
+        
+        # Log-Energy Entropy for each 0.5-second window
+        log_energy_entropy_first_half = np.sum(np.log(first_half**2 + epsilon))
+        log_energy_entropy_second_half = np.sum(np.log(second_half**2 + epsilon))
+        stats[f'log_energy_entropy_first_half_{col}'] = log_energy_entropy_first_half
+        stats[f'log_energy_entropy_second_half_{col}'] = log_energy_entropy_second_half
+        
+        # Derivatives of 0.25s windows (quarter length)
+        quarter_len = len(signal) // 4
+        quarters = [signal[i*quarter_len:(i+1)*quarter_len] for i in range(4)]
+        
+        min_vals = [np.min(quarter) for quarter in quarters]
+        max_vals = [np.max(quarter) for quarter in quarters]
+        mean_vals = [np.mean(quarter) for quarter in quarters]
+        
+        stats[f'deriv_max_1_2_{col}'] = np.max(quarters[1]) - np.max(quarters[0])
+        stats[f'deriv_max_3_4_{col}'] = np.max(quarters[3]) - np.max(quarters[2])
+        stats[f'deriv_min_1_2_{col}'] = np.min(quarters[1]) - np.min(quarters[0])
+        stats[f'deriv_min_3_4_{col}'] = np.min(quarters[3]) - np.min(quarters[2])
+        
+        # Shannon Entropy for 1-second window
+        signal_normalized = signal / (np.sum(signal) + epsilon)  # normalization step
+        stats[f'shannon_entropy_{col}'] = -np.sum(signal_normalized * np.log(signal_normalized + epsilon))
+        
+        # FFT Analysis
+        fft_vals = fft(signal)
+        fft_abs = np.abs(fft_vals)
+        stats[f'fft_mean_{col}'] = np.mean(fft_abs)
+        stats[f'fft_std_{col}'] = np.std(fft_abs)
+        stats[f'fft_kurtosis_{col}'] = kurtosis(fft_abs)
+        stats[f'fft_skewness_{col}'] = skew(fft_abs)
 
-    # Extract features
-    window_length_sec = 4  # Window length is 4 seconds
-    window_length_samples = window_length_sec * fs_new  # Convert window length from seconds to samples
+        # Power Spectral Density (PSD)
+        freqs, psd = power_spectral_density(signal)
+        stats[f'psd_peak_freq_{col}'] = freqs[np.argmax(psd)]
+        stats[f'spectral_entropy_{col}'] = spectral_entropy(psd)
+        
+        # Differential Entropy for the 1-second window
+        stats[f'differential_entropy_{col}'] = differential_entropy(signal)
 
-    # Define frequency bands
-    bands = {'Delta': (1, 4), 'Theta': (4, 8), 'Alpha': (8, 14), 'Beta': (14, 31), 'Gamma': (31, 50)}
-    num_bands = len(bands)
-    num_channels = len(df.columns)
-    total_samples = processed_data_df.shape[0]
-    num_windows = total_samples // window_length_samples  # Number of complete 4-second windows
+        # Calculate Euclidean distances for min, max, and mean values between all pairs of quarters
+        for i in range(4):
+            for j in range(i + 1, 4):
+                stats[f'euclid_min_{col}_{i+1}_{j+1}'] = euclidean_distance(min_vals[i], min_vals[j])
+                stats[f'euclid_max_{col}_{i+1}_{j+1}'] = euclidean_distance(max_vals[i], max_vals[j])
+                stats[f'euclid_mean_{col}_{i+1}_{j+1}'] = euclidean_distance(mean_vals[i], mean_vals[j])
 
-    # Initialize arrays for PSD and DE features
-    psd_features = np.zeros((num_bands, num_channels, num_windows))
-    de_features = np.zeros((num_bands, num_channels, num_windows))
+    # Compute Log-Covariance Matrix features
+    log_cov_features = compute_log_cov_features(stats)
+    for idx, val in enumerate(log_cov_features):
+        stats[f'log_cov_{idx}'] = val
+    
+    return stats
 
-    for i, (band, (low_freq, high_freq)) in enumerate(bands.items()):
-        nyquist = fs_new / 2
-        low = low_freq / nyquist
-        high = high_freq / nyquist
-        b, a = signal.butter(5, [low, high], btype='band')
+# Apply sliding windows and extract statistics
+def process_eeg_data(df, selected_sensors, original_frequency=1000, new_frequency=200):
+    df_selected = df.iloc[:, selected_sensors]
 
-        for j in range(num_channels):
-            column = processed_data_df.columns[j]
-            data = processed_data_df[column].values
+    # Shift the signal to ensure all values are non-negative
+    shift_value = np.abs(np.min(df_selected.values))
+    df_selected = df_selected + shift_value
 
-            if len(data) < min_length:
-                raise ValueError(f"Data in column '{column}' is too short for filtering")
+    # Resample the data to 200Hz using Fourier-based method
+    num_samples = len(df_selected)
+    new_num_samples = int(num_samples * new_frequency / original_frequency)
+    resampled_data = resample(df_selected, new_num_samples)
 
-            # Filter data for specific band
-            filtered_data = signal.filtfilt(b, a, data)
+    # Create a DataFrame for the resampled data
+    df_resampled = pd.DataFrame(resampled_data, columns=['TP9', 'FP1', 'FP2', 'TP10'])
 
-            # Segment and calculate features for each window
-            for k in range(num_windows):
-                start = k * window_length_samples
-                end = start + window_length_samples
-                segment = filtered_data[start:end]
+    # Define sliding window parameters
+    window_length = 200  # 1 second window for 200Hz data
+    overlap = 100  # 0.5 second overlap
+    step = window_length - overlap
 
-                # Calculate PSD using Welch's method
-                freqs, power = signal.welch(segment, fs_new, nperseg=window_length_samples)
-                psd_features[i, j, k] = np.mean(power)
+    # Apply sliding windows and extract statistics
+    statistics = []
+    for start in range(0, len(df_resampled) - window_length + 1, step):
+        window = df_resampled.iloc[start:start + window_length]
+        statistics.append(extract_statistics(window))
 
-                # Calculate DE
-                de_features[i, j, k] = 0.5 * np.log2(2 * np.pi * np.exp(1) * np.var(segment))
+    # Convert the statistics to a DataFrame
+    df_statistics = pd.DataFrame(statistics)
 
-    # Convert numpy arrays to pandas DataFrames
-    psd_features_df = [pd.DataFrame(psd_features[i]) for i in range(psd_features.shape[0])]
-    de_features_df = [pd.DataFrame(de_features[i]) for i in range(de_features.shape[0])]
+    return df_statistics
 
-    # Find the maximum number of columns (Wmax)
-    max_cols = max(df.shape[1] for df in psd_features_df + de_features_df)
+# Function to load data, process it, and return the features
+def load_data_and_process(file_path, selected_sensors=[3, 4, 32, 40]):
+    df = pd.read_csv(file_path)
+    df_statistics = process_eeg_data(df, selected_sensors)
+    return df_statistics
 
-    # Pad each DataFrame with zeros to match the max number of columns (Wmax)
-    padded_features = [df.join(pd.DataFrame(0, index=df.index, columns=range(df.shape[1], max_cols))) for df in psd_features_df + de_features_df]
+# Function to gather data
+def gather_data(base_dir):
+    # emotions: 0 - neutral, 1 - sad, 2 - fear, 3 - happy
+    sessions_labels = {
+        #supposed emotions are: 1)sad, 2)fear, 3)happy, 4)neutral, 5)happy, 6)neutral, 7)neutral, 8)sad, 9)neutral, 10)sad, 11)happy, 12)sad, 13)sad, 14)sad, 15)happy, 16)fear, 17)sad, 18)happy, 19)fear, 20)fear, 21)neutral, 22)fear, 23)neutral, 24)fear
+        '1': [1, 2, 3, 0, 2, 0, 0, 1, 0, 1, 2, 1, 1, 1, 2, 3, 2, 2, 3, 3, 0, 3, 0, 3], 
+        #supposed emotions are: 1)fear, 2)happy, 3)happy, 4)sad, 5)happy, 6)sad, 7)sad, 8)fear, 9)fear, 10)happy, 11)fear, 12)neutral, 13)happy, 14)sad, 15)fear, 16)happy, 17)neutral, 18)happy, 19)neutral, 20)neutral, 21)happy, 22)neutral, 23)happy, 24)neutral
+        '2': [2, 1, 3, 0, 0, 2, 0, 2, 3, 3, 2, 3, 2, 0, 1, 1, 2, 1, 0, 3, 0, 1, 3, 1],
+        #supposed emotions are: 1)happy, 2)sad, 3)neutral, 4)happy, 5)neutral, 6)happy, 7)neutral, 8)happy, 9)neutral, 10)happy, 11)neutral, 12)happy, 13)neutral, 14)happy, 15)neutral, 16)happy, 17)neutral, 18)happy, 19)neutral, 20)happy, 21)neutral, 22)happy, 23)neutral, 24)happy
+        '3': [1, 2, 2, 1, 3, 3, 3, 1, 1, 2, 1, 0, 2, 3, 3, 0, 2, 3, 0, 0, 2, 0, 1, 0]
+    }
+    results = []
 
-    # Flatten each DataFrame
-    flattened_features = [df.values.flatten() for df in padded_features]
 
-    return np.array(flattened_features)
 
-def predict_emotion_from_features(features, model, pca, scaler):
-    # Normalize each flattened array (MinMax scaling)
-    normalized_features = scaler.transform(features)
+    # Wrap the outer loop with tqdm for session directories
+    for session in tqdm(sorted(os.listdir(base_dir)), desc="Sessions", position=2):
+        session_dir = os.path.join(base_dir, session)
+        if os.path.isdir(session_dir):
+            labels = sessions_labels[session]
+            # Wrap the middle loop with tqdm for EEG folders
+            eeg_folders = os.listdir(session_dir)
+            for i, eeg_folder in tqdm(enumerate(sorted(eeg_folders)), desc="EEG folders", total=len(eeg_folders), leave=False, position=0):
+                eeg_dir = os.path.join(session_dir, eeg_folder)
+                if os.path.isdir(eeg_dir):
+                    # Wrap the innermost loop with tqdm for files within each EEG folder
+                    files = os.listdir(eeg_dir)
+                    for file in tqdm(sorted(files), desc="Files", total=len(files), leave=False, position=1):
+                        if file.endswith('.csv'):
+                            file_path = os.path.join(eeg_dir, file)
+                            features = load_data_and_process(file_path)
+                            results.append((*features.values, labels[i]))
 
-    # Apply PCA
-    pca_features = pca.transform(normalized_features)
+    return results
+#for 2: pos1 fear pos5 happy pos12 neutral pos7 sad
+# Function to shuffle and save the results
+def shuffle_and_save(results, output_file):
+    tqdm.write("Shuffling data...")
+    random.shuffle(results)
+    tqdm.write("Saving data...")
+    data = {
+        'features': [result[:-1] for result in results],  # all except the last element (label)
+        'labels': [result[-1] for result in results]
+    }
+    with open(output_file, 'wb') as f:
+        pickle.dump(data, f)
+    tqdm.write("Data saved to {}".format(output_file))
 
-    # Predict emotion
-    predictions = model.predict(pca_features)
-    return predictions
+import warnings
+warnings.filterwarnings("ignore")
 
-def predict_emotion(df, model, pca, scaler):
-    features = process_and_extract_features(df)
-    return predict_emotion_from_features(features, model, pca, scaler)
+if __name__ == "__main__":
+    base_dir = '/home/alex/UVT/Thesis/csv_files'
+    results = gather_data(base_dir)
+    shuffle_and_save(results, 'processed_eeg_data_opt_v2.pkl')
+
+

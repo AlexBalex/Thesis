@@ -1,14 +1,18 @@
+import warnings
+warnings.filterwarnings('ignore')
 from tkinter import Text, Toplevel, filedialog, Frame, messagebox, simpledialog, Tk, Button, Label, BOTH
 from pandas import read_csv, concat, DataFrame
 from matplotlib.animation import FuncAnimation
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.figure import Figure
-from sklearn.preprocessing import StandardScaler
 from scipy.io import loadmat
 from numpy import abs, where, fft
-import random
+import numpy
 import os
 from model_training import EmotionDetector
+from feature_extraction import process_eeg_data
+import json
+
 
 class CsvLoaderApp:
     def __init__(self, root):
@@ -24,7 +28,7 @@ class CsvLoaderApp:
         self.root.resizable(False, False)
         self.animation = None
         self.DataFrame = None
-        self.detector = EmotionDetector("processed_eeg_data_de_LDS.pkl")
+        self.detector = EmotionDetector("processed_eeg_data.pkl")
 
         # Frame for the buttons and labels
         control_frame = Frame(self.root)
@@ -42,9 +46,22 @@ class CsvLoaderApp:
         self.convert_button = Button(control_frame, text="Convert MAT to CSV", command=self.convert_mat_to_csv)
         self.convert_button.grid(row=0, column=0, padx=5) 
 
+        # Accuracy label
+        self.accuracy_label = Label(control_frame, text="Accuracy:")
+        self.accuracy_label.grid(row=1, column=1, sticky='e')
+
+        with open('accuracy.json', 'r') as f:
+            data = json.load(f)
+            accuracy = data['accuracy']    
+        accuracy_text = f"{accuracy:.2%}"
+
+        self.accuracy_value_label = Label(control_frame, text=accuracy_text)
+        self.accuracy_value_label.grid(row=1, column=2, sticky='w')
+
         # Status label
         self.status_label = Label(control_frame, text="")
-        self.status_label.grid(row=1, column=0, columnspan=4)
+        self.status_label.grid(row=2, column=0, columnspan=4)
+
 
         # Emotion label and field
         self.emotion_label = Label(control_frame, text="Emotion: ")
@@ -55,7 +72,7 @@ class CsvLoaderApp:
 
         # Help button
         self.help_button = Button(self.root, text="?", command=self.show_help, font=('Arial', 10, 'bold'), padx=3, pady=0)
-        self.help_button.pack(side='top', anchor='ne', padx=10, pady=5)  # Increase padding if needed to position correctly
+        self.help_button.pack(side='top', anchor='ne', padx=10, pady=5) 
 
         # Frame for the plot
         plot_frame = Frame(self.root)
@@ -134,7 +151,7 @@ class CsvLoaderApp:
                     return line,
 
                 # Setup animation parameters
-                step_size = 10
+                step_size = 100
                 frames = range(0, (len(freq_bins_positive) + step_size - 1) // step_size)  # Adjust frame count based on step size
                 interval = 10  # Milliseconds between frames
 
@@ -148,42 +165,76 @@ class CsvLoaderApp:
             else:
                 self.status_label.config(text="No numeric columns found for Fourier transformation.", fg="red")
 
+    def update_emotion_multiple(self):
+        selected_sensors = [3, 4, 32, 40] 
+        original_frequency = 1000 
+        new_frequency = 200 
+        max_cols = 102
+
+        emotion_label_map = {0: 'Neutral', 1: 'Sad', 2: 'Fear', 3: 'Happy'}
+        dr = "/home/alex/UVT/Thesis/csv_files/2/1"
+        files = sorted([f for f in os.listdir(dr) if f.endswith('.csv')])
+        predictions = []
+
+        for file in files[:24]:  
+            file_path = os.path.join(dr, file)
+            df = read_csv(file_path)
+
+            # Process the EEG data, including resampling, shifting, windowing, and extracting features
+            df_statistics = process_eeg_data(df, selected_sensors, original_frequency, new_frequency)
+            numeric_df = DataFrame(numpy.array(df_statistics).T)
+            processed_data = self.detector.preprocess_data_for_prediction(numeric_df, max_cols)
+
+            # Use the detector to predict emotion based on the extracted features
+            emotion = self.detector.predict_emotion(processed_data)
+            chosen_emotion = emotion_label_map.get(emotion, 'Unknown')
+
+            # Store prediction for the file
+            predictions.append((file, chosen_emotion))
+
+        # Print or display predictions for each file
+        for file, emotion in predictions:
+            print(f"File: {file} - Predicted Emotion: {emotion}")
+
+
 
     def update_emotion(self):
+        # self.update_emotion_multiple()
+        # return
+
         if self.DataFrame is not None:
-            # Preprocess the data to match the expected format for the model
-            numeric_df = self.DataFrame.select_dtypes(include=['number'])
-            # print("Shape of numeric_df:", numeric_df.shape)  # Debugging print to check the shape
-            if not numeric_df.empty:
-                max_cols = 320  # Number of features before flattening
-                num_rows = numeric_df.shape[0]
-                expected_features = max_cols * num_rows
-                # print("Expected number of features:", expected_features)  # Debugging print
+            selected_sensors = [3, 4, 32, 40]  # Update as necessary based on your DataFrame columns
+            original_frequency = 1000  # The original frequency of the EEG data
+            new_frequency = 200  # The frequency to which the data should be resampled
+            # expected_feature_count = 24276
+            max_cols = 102
 
-                # Pad the DataFrame
-                # padded_features = numeric_df.reindex(columns=range(max_cols), fill_value=0)
-                padded_features = numeric_df.join(DataFrame(0, index=numeric_df.index, columns=range(numeric_df.shape[1], max_cols)))
-                # Flatten the DataFrame
-                flattened_features = padded_features.values.flatten()
-                # print("Number of features after flattening:", len(flattened_features))  # Debugging print
+            # Process the EEG data, including resampling, shifting, windowing, and extracting features
+            df_statistics = process_eeg_data(self.DataFrame, selected_sensors, original_frequency, new_frequency)
 
-                # Ensure the number of features match
-                if len(flattened_features) != expected_features:
-                    print(f"Warning: Number of features {len(flattened_features)} does not match expected {expected_features}.")
+            # print("Number of features:\n", df_statistics.shape[1])
 
-                emotion = self.detector.predict_emotion(flattened_features)
-                # print(f"Predicted emotion: {emotion}")  # Debugging print for the predicted emotion
+            numeric_df = DataFrame(numpy.array(df_statistics).T)
 
-                emotion_label_map = {0: 'Neutral', 1: 'Sad', 2: 'Fear', 3: 'Happy'}
-                emotion_color = {
-                    'Happy': 'green',
-                    'Sad': 'blue',
-                    'Fear': 'purple',
-                    'Neutral': 'gray'
-                }
-                chosen_emotion = emotion_label_map.get(emotion, 'Unknown')
-                self.emotion_field.config(text=chosen_emotion, fg=emotion_color.get(chosen_emotion, 'black'))
+            # flattened_features = self.detector.preprocess_data([df_statistics])
 
+            # print("Number of features:\n", flattened_features.shape[1])
+            # print(flattened_features)
+
+            # padded_features = numeric_df.join(DataFrame(0, index=numeric_df.index, columns=range(numeric_df.shape[1], max_cols)))
+
+            # flattened_features = padded_features.values.flatten()
+
+            processed_data = self.detector.preprocess_data_for_prediction(numeric_df, max_cols)
+
+            # Use the detector to predict emotion based on the extracted features
+            emotion = self.detector.predict_emotion(processed_data)
+
+            # Map and update the GUI or output component with the emotion
+            emotion_label_map = {0: 'Neutral', 1: 'Sad', 2: 'Fear', 3: 'Happy'}
+            emotion_color = {'Happy': 'green', 'Sad': 'blue', 'Fear': 'purple', 'Neutral': 'gray'}
+            chosen_emotion = emotion_label_map.get(emotion, 'Unknown')
+            self.emotion_field.config(text=chosen_emotion, fg=emotion_color.get(chosen_emotion, 'black'))
 
     def convert_mat_to_csv(self):
         mat_files_dir = '/home/alex/UVT/thesis/mat_files'
@@ -295,6 +346,7 @@ class CsvLoaderApp:
 
         # Apply the calculated position and size to the child window
         child_window.geometry(f"{width}x{height}+{x}+{y}")
+
 
 # Create the Tkinter window
 root = Tk()
