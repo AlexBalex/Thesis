@@ -8,31 +8,31 @@ from scipy.stats import skew, kurtosis
 from scipy.fft import fft
 from tqdm import tqdm
 
-epsilon = 1e-12  # small constant to prevent log(0)
+epsilon = 1e-12  
 
-# Function to calculate Euclidean distance
+
 def euclidean_distance(x, y):
     return np.sqrt(np.sum((x - y) ** 2))
 
-# Function to compute power spectral density
+
 def power_spectral_density(signal, fs=200):
     freqs, psd = welch(signal, fs)
     return freqs, psd
 
-# Function to compute spectral entropy
+
 def spectral_entropy(psd):
     psd_norm = psd / np.sum(psd)
     return -np.sum(psd_norm * np.log(psd_norm + epsilon))
 
-# Function to compute differential entropy
+
 def differential_entropy(signal):
     sigma2 = np.var(signal)
     return 0.5 * np.log(2 * np.pi * np.e * sigma2)
 
-# Function to compute the Logarithmic Covariance Matrix features
+
 def compute_log_cov_features(statistics):
     features = np.array(list(statistics.values()))
-    features = features[:144]  # Ignore the last 6 features to get 144 features
+    features = features[:144]
     features_matrix = features.reshape((12, 12))
     
     cov_matrix = np.cov(features_matrix)
@@ -43,7 +43,7 @@ def compute_log_cov_features(statistics):
     
     return log_cov_features
 
-# Function to extract various statistics from each window
+
 def extract_statistics(window):
     stats = {}
     
@@ -56,20 +56,20 @@ def extract_statistics(window):
         stats[f'max_{col}'] = np.max(signal)
         stats[f'min_{col}'] = np.min(signal)
         
-        # Derivatives (difference between halves)
+        # Derivatives of 0.5s windows
         half_len = len(signal) // 2
         first_half = signal[:half_len]
         second_half = signal[half_len:]
         stats[f'deriv_max_{col}'] = np.max(second_half) - np.max(first_half)
         stats[f'deriv_min_{col}'] = np.min(second_half) - np.min(first_half)
         
-        # Log-Energy Entropy for each 0.5-second window
+        # Log-Energy Entropy for 0.5-second window
         log_energy_entropy_first_half = np.sum(np.log(first_half**2 + epsilon))
         log_energy_entropy_second_half = np.sum(np.log(second_half**2 + epsilon))
         stats[f'log_energy_entropy_first_half_{col}'] = log_energy_entropy_first_half
         stats[f'log_energy_entropy_second_half_{col}'] = log_energy_entropy_second_half
         
-        # Derivatives of 0.25s windows (quarter length)
+        # Derivatives of 0.25s windows
         quarter_len = len(signal) // 4
         quarters = [signal[i*quarter_len:(i+1)*quarter_len] for i in range(4)]
         
@@ -83,7 +83,7 @@ def extract_statistics(window):
         stats[f'deriv_min_3_4_{col}'] = np.min(quarters[3]) - np.min(quarters[2])
         
         # Shannon Entropy for 1-second window
-        signal_normalized = signal / (np.sum(signal) + epsilon)  # normalization step
+        signal_normalized = signal / (np.sum(signal) + epsilon)
         stats[f'shannon_entropy_{col}'] = -np.sum(signal_normalized * np.log(signal_normalized + epsilon))
         
         # FFT Analysis
@@ -102,14 +102,14 @@ def extract_statistics(window):
         # Differential Entropy for the 1-second window
         stats[f'differential_entropy_{col}'] = differential_entropy(signal)
 
-        # Calculate Euclidean distances for min, max, and mean values between all pairs of quarters
+        # Euclidian Distance
         for i in range(4):
             for j in range(i + 1, 4):
                 stats[f'euclid_min_{col}_{i+1}_{j+1}'] = euclidean_distance(min_vals[i], min_vals[j])
                 stats[f'euclid_max_{col}_{i+1}_{j+1}'] = euclidean_distance(max_vals[i], max_vals[j])
                 stats[f'euclid_mean_{col}_{i+1}_{j+1}'] = euclidean_distance(mean_vals[i], mean_vals[j])
 
-    # Compute Log-Covariance Matrix features
+    # Log-Covariance Matrix
     log_cov_features = compute_log_cov_features(stats)
     for idx, val in enumerate(log_cov_features):
         stats[f'log_cov_{idx}'] = val
@@ -130,7 +130,7 @@ def process_eeg_data(df, selected_sensors, original_frequency=1000, new_frequenc
     resampled_data = resample(df_selected, new_num_samples)
 
     # Create a DataFrame for the resampled data
-    df_resampled = pd.DataFrame(resampled_data, columns=['TP9', 'FP1', 'FP2', 'TP10'])
+    df_resampled = pd.DataFrame(resampled_data, columns=['TP7', 'FP1', 'FP2', 'TP8'])
 
     # Define sliding window parameters
     window_length = 200  # 1 second window for 200Hz data
@@ -158,11 +158,9 @@ def load_data_and_process(file_path, selected_sensors=[3, 4, 32, 40]):
 def gather_data(base_dir):
     # emotions: 0 - neutral, 1 - sad, 2 - fear, 3 - happy
     sessions_labels = {
-        #supposed emotions are: 1)sad, 2)fear, 3)happy, 4)neutral, 5)happy, 6)neutral, 7)neutral, 8)sad, 9)neutral, 10)sad, 11)happy, 12)sad, 13)sad, 14)sad, 15)happy, 16)fear, 17)sad, 18)happy, 19)fear, 20)fear, 21)neutral, 22)fear, 23)neutral, 24)fear
         '1': [1, 2, 3, 0, 2, 0, 0, 1, 0, 1, 2, 1, 1, 1, 2, 3, 2, 2, 3, 3, 0, 3, 0, 3], 
-        #supposed emotions are: 1)fear, 2)happy, 3)happy, 4)sad, 5)happy, 6)sad, 7)sad, 8)fear, 9)fear, 10)happy, 11)fear, 12)neutral, 13)happy, 14)sad, 15)fear, 16)happy, 17)neutral, 18)happy, 19)neutral, 20)neutral, 21)happy, 22)neutral, 23)happy, 24)neutral
+         #for 2: pos1 fear pos5 happy pos12 neutral pos7 sad
         '2': [2, 1, 3, 0, 0, 2, 0, 2, 3, 3, 2, 3, 2, 0, 1, 1, 2, 1, 0, 3, 0, 1, 3, 1],
-        #supposed emotions are: 1)happy, 2)sad, 3)neutral, 4)happy, 5)neutral, 6)happy, 7)neutral, 8)happy, 9)neutral, 10)happy, 11)neutral, 12)happy, 13)neutral, 14)happy, 15)neutral, 16)happy, 17)neutral, 18)happy, 19)neutral, 20)happy, 21)neutral, 22)happy, 23)neutral, 24)happy
         '3': [1, 2, 2, 1, 3, 3, 3, 1, 1, 2, 1, 0, 2, 3, 3, 0, 2, 3, 0, 0, 2, 0, 1, 0]
     }
     results = []
@@ -188,7 +186,7 @@ def gather_data(base_dir):
                             results.append((*features.values, labels[i]))
 
     return results
-#for 2: pos1 fear pos5 happy pos12 neutral pos7 sad
+
 # Function to shuffle and save the results
 def shuffle_and_save(results, output_file):
     tqdm.write("Shuffling data...")
@@ -209,5 +207,4 @@ if __name__ == "__main__":
     base_dir = '/home/alex/UVT/Thesis/csv_files'
     results = gather_data(base_dir)
     shuffle_and_save(results, 'processed_eeg_data_opt_v2.pkl')
-
 

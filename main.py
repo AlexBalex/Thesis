@@ -2,11 +2,13 @@ import warnings
 warnings.filterwarnings('ignore')
 from tkinter import Text, Toplevel, filedialog, Frame, messagebox, simpledialog, Tk, Button, Label, BOTH
 from pandas import read_csv, concat, DataFrame
-from matplotlib.animation import FuncAnimation
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.figure import Figure
 from scipy.io import loadmat
-from numpy import abs, where, fft
+from scipy.signal import welch
+from numpy import abs, where
+from screeninfo import get_monitors
+from scipy import fft
 import numpy
 import os
 from model_training import EmotionDetector
@@ -17,14 +19,16 @@ import json
 class CsvLoaderApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Emotion detection")
-        window_width = 800
-        window_height = 640
-        screen_width = self.root.winfo_screenwidth()
-        screen_height = self.root.winfo_screenheight()
-        center_x = int(screen_width / 2 - window_width / 2)
-        center_y = int(screen_height / 2 - window_height / 2)
-        self.root.geometry(f'{window_width}x{window_height}+{center_x}+{center_y}')
+        self.root.title("FeelFinder")
+        monitors = get_monitors()
+        main_monitor = monitors[0]
+        desired_width = 1200
+        desired_height = 800
+        # Calculate x and y to center the window on the main monitor
+        center_x = main_monitor.x + (main_monitor.width - desired_width) // 2
+        center_y = main_monitor.y + (main_monitor.height - desired_height) // 2
+        # Position the window on the main monitor with the desired size
+        self.root.geometry(f"{desired_width}x{desired_height}+{center_x}+{center_y}")
         self.root.resizable(False, False)
         self.animation = None
         self.DataFrame = None
@@ -34,21 +38,25 @@ class CsvLoaderApp:
         control_frame = Frame(self.root)
         control_frame.pack(pady=10)
 
+        # Retrain Model button
+        self.retrain_button = Button(control_frame, text="Retrain Model", command=self.retrain_model)
+        self.retrain_button.grid(row=0, column=0, padx=5)
+
         # Load CSV button
         self.load_button = Button(control_frame, text="Load CSV", command=self.load_csv)
-        self.load_button.grid(row=0, column=1, padx=5)
+        self.load_button.grid(row=0, column=2, padx=5)
 
-        # Make Diagram button
-        self.diagram_button = Button(control_frame, text="Make Diagram", command=self.make_diagram)
-        self.diagram_button.grid(row=0, column=2, padx=5)
+        # Detect emotion button
+        self.emotion_button = Button(control_frame, text="Detect Emotion", command=self.update_emotion)
+        self.emotion_button.grid(row=0, column=3, padx=5)
 
         # Convert MAT to CSV button
         self.convert_button = Button(control_frame, text="Convert MAT to CSV", command=self.convert_mat_to_csv)
-        self.convert_button.grid(row=0, column=0, padx=5) 
+        self.convert_button.grid(row=0, column=1, padx=5) 
 
-        # Accuracy label
+       # Accuracy label
         self.accuracy_label = Label(control_frame, text="Accuracy:")
-        self.accuracy_label.grid(row=1, column=1, sticky='e')
+        self.accuracy_label.grid(row=1, column=0, columnspan=2, sticky='e')
 
         with open('accuracy.json', 'r') as f:
             data = json.load(f)
@@ -56,19 +64,18 @@ class CsvLoaderApp:
         accuracy_text = f"{accuracy:.2%}"
 
         self.accuracy_value_label = Label(control_frame, text=accuracy_text)
-        self.accuracy_value_label.grid(row=1, column=2, sticky='w')
+        self.accuracy_value_label.grid(row=1, column=2, columnspan=2, sticky='w')
 
         # Status label
         self.status_label = Label(control_frame, text="")
-        self.status_label.grid(row=2, column=0, columnspan=4)
-
+        self.status_label.grid(row=2, column=0, columnspan=6)
 
         # Emotion label and field
         self.emotion_label = Label(control_frame, text="Emotion: ")
-        self.emotion_label.grid(row=0, column=3, sticky='e') 
+        self.emotion_label.grid(row=0, column=4, sticky='e') 
 
         self.emotion_field = Label(control_frame, text="")
-        self.emotion_field.grid(row=0, column=4) 
+        self.emotion_field.grid(row=0, column=5) 
 
         # Help button
         self.help_button = Button(self.root, text="?", command=self.show_help, font=('Arial', 10, 'bold'), padx=3, pady=0)
@@ -87,7 +94,7 @@ class CsvLoaderApp:
         self.toolbar.update()
    
     def load_csv(self):
-        file_path = filedialog.askopenfilename(initialdir='/home/alex/UVT/thesis/csv_files',filetypes=[("CSV files", "*.csv")],title="Open CSV File")
+        file_path = filedialog.askopenfilename(initialdir='/home/alex/UVT/Thesis/csv_files',filetypes=[("CSV files", "*.csv")],title="Open CSV File")
         if file_path: 
             # Stop any existing animation
             if self.animation is not None and self.animation.event_source is not None:
@@ -106,64 +113,6 @@ class CsvLoaderApp:
             filename = file_path.split("/")[-1]
             self.status_label.config(text=f"Successfully loaded {filename}", fg="green") 
             self.emotion_field.config(text="")
-
-    def make_diagram(self):
-        if self.DataFrame is None:  # Check if the DataFrame has not been loaded
-            self.status_label.config(text="No CSV file loaded. Please load a CSV file first.", fg="red")
-        else:
-            numeric_df = self.DataFrame.select_dtypes(include=['number'])
-            if not numeric_df.empty:
-                # Perform Fourier transform
-                data_to_transform = numeric_df.iloc[:, 0].values
-                fourier_transformed = fft.fft(data_to_transform)
-                n = len(data_to_transform)
-                freq_bins = fft.fftfreq(n, d=1)
-                
-                # Filter out only the positive frequencies for visualization
-                positive_freq_indices = where(freq_bins >= 0)
-                freq_bins_positive = freq_bins[positive_freq_indices]
-                fourier_transformed_positive = fourier_transformed[positive_freq_indices]
-
-                # Clear the figure and set up new axes
-                self.figure.clear()
-                ax = self.figure.add_subplot(111)
-                ax.set_title('Frequency Spectrum Animation')
-                ax.set_xlabel('Frequency (Hz)')
-                ax.set_ylabel('Magnitude')
-                ax.grid(True)
-
-                # Prepare for animation
-                line, = ax.plot([], [], 'r-', animated=True)
-                ax.set_xlim(0, freq_bins_positive.max())
-                ax.set_ylim(0, abs(fourier_transformed_positive).max())
-
-                # Initialize the line
-                def init():
-                    line.set_data([], [])
-                    return line,
-
-                # Update function for the animation
-                def update(frame):
-                    # Use the frame as an index slice up to current frame with step_size adjustment
-                    line.set_data(freq_bins_positive[:frame * step_size], abs(fourier_transformed_positive[:frame * step_size]))
-                    if len(freq_bins_positive) - frame * step_size <= step_size:
-                        self.update_emotion()
-                    return line,
-
-                # Setup animation parameters
-                step_size = 100
-                frames = range(0, (len(freq_bins_positive) + step_size - 1) // step_size)  # Adjust frame count based on step size
-                interval = 10  # Milliseconds between frames
-
-                # Configure animation
-                self.animation = FuncAnimation(self.figure, update, frames=frames,
-                                            init_func=init, blit=True, interval=interval, repeat=False)
-
-                # Draw the canvas
-                self.canvas.draw()
-
-            else:
-                self.status_label.config(text="No numeric columns found for Fourier transformation.", fg="red")
 
     def update_emotion_multiple(self):
         selected_sensors = [3, 4, 32, 40] 
@@ -196,13 +145,48 @@ class CsvLoaderApp:
         for file, emotion in predictions:
             print(f"File: {file} - Predicted Emotion: {emotion}")
 
+    def plot_fft(self, combined_data, ax, sampling_rate):
+        # Perform Fourier transform on the combined data
+        fourier_transformed = fft.fft(combined_data)
+        n = len(combined_data)
+        freq_bins = fft.fftfreq(n, d=1.0/sampling_rate)
 
+        # Filter out only the positive frequencies for visualization
+        positive_freq_indices = numpy.where(freq_bins >= 0)
+        freq_bins_positive = freq_bins[positive_freq_indices]
+        fourier_transformed_positive = abs(fourier_transformed[positive_freq_indices])
+
+        # Plot the Fourier-transformed combined data
+        ax.plot(freq_bins_positive, fourier_transformed_positive, 'r-')
+        ax.set_title('Fast Fourier Transform Diagram')
+        ax.set_xlabel('Frequency (Hz)')
+        ax.set_ylabel('Magnitude')
+        ax.grid(True)
+
+        # Set the x-axis limits to cover the entire frequency range
+        ax.set_xlim(0, 90) 
+
+    def plot_psd(self, combined_data, ax, sampling_rate):
+        # Compute the Power Spectral Density (PSD) using the Welch method
+        freqs, psd = welch(combined_data, fs=sampling_rate, nperseg=1024)
+
+        # Plot the PSD data
+        ax.plot(freqs, 10 * numpy.log10(psd), 'b-')
+        ax.set_title('Power Spectral Density Diagram')
+        ax.set_xlabel('Frequency (Hz)')
+        ax.set_ylabel('Power/Frequency (dB/Hz)')
+        ax.grid(True)
+
+        # Set the x-axis limits to cover the entire frequency range
+        ax.set_xlim(0, 90)
 
     def update_emotion(self):
         # self.update_emotion_multiple()
         # return
 
-        if self.DataFrame is not None:
+        if self.DataFrame is None:  # Check if the DataFrame has not been loaded
+            self.status_label.config(text="No CSV file loaded. Please load a CSV file first.", fg="red")
+        else:
             selected_sensors = [3, 4, 32, 40]  # Update as necessary based on your DataFrame columns
             original_frequency = 1000  # The original frequency of the EEG data
             new_frequency = 200  # The frequency to which the data should be resampled
@@ -211,10 +195,21 @@ class CsvLoaderApp:
 
             # Process the EEG data, including resampling, shifting, windowing, and extracting features
             df_statistics = process_eeg_data(self.DataFrame, selected_sensors, original_frequency, new_frequency)
-
-            # print("Number of features:\n", df_statistics.shape[1])
-
             numeric_df = DataFrame(numpy.array(df_statistics).T)
+
+            # Combine data from all columns by summing them
+            combined_data = numeric_df.sum(axis=1).values
+
+            # Clear the figure and set up two subplots
+            self.figure.clear()
+            ax1 = self.figure.add_subplot(121)  # Left subplot for FFT
+            ax2 = self.figure.add_subplot(122)  # Right subplot for PSD
+
+            # Plot the FFT on the left
+            self.plot_fft(combined_data, ax1, sampling_rate=new_frequency)
+
+            # Plot the PSD on the right
+            self.plot_psd(combined_data, ax2, sampling_rate=new_frequency)
 
             # flattened_features = self.detector.preprocess_data([df_statistics])
 
@@ -224,6 +219,8 @@ class CsvLoaderApp:
             # padded_features = numeric_df.join(DataFrame(0, index=numeric_df.index, columns=range(numeric_df.shape[1], max_cols)))
 
             # flattened_features = padded_features.values.flatten()
+
+            self.canvas.draw()
 
             processed_data = self.detector.preprocess_data_for_prediction(numeric_df, max_cols)
 
@@ -237,8 +234,8 @@ class CsvLoaderApp:
             self.emotion_field.config(text=chosen_emotion, fg=emotion_color.get(chosen_emotion, 'black'))
 
     def convert_mat_to_csv(self):
-        mat_files_dir = '/home/alex/UVT/thesis/mat_files'
-        csv_files_dir = '/home/alex/UVT/thesis/csv_files'
+        mat_files_dir = '/home/alex/UVT/Thesis/mat_files'
+        csv_files_dir = '/home/alex/UVT/Thesis/csv_files'
         
         file_path = filedialog.askopenfilename(initialdir=mat_files_dir,
                                             filetypes=[("MAT-files", "*.mat")],
@@ -318,10 +315,11 @@ class CsvLoaderApp:
         text = Text(help_window, wrap='word')
         text.insert('1.0', (
             "How to use the application:\n\n"
-            "Press the buttons in the following order:\n\n"
-            "1. Convert MAT to CSV: Convert a chosen session from a .mat file to a .csv file.\n\n"
-            "2. Load CSV: Click 'Load CSV' then select a csv file from a folder to load.\n\n"
-            "3. Make Diagram: With a CSV file loaded, click the 'Make Diagram' button to generate a fast fourier diagram and to get the emotion for the respective .csv file.\n"
+            "Retrain Model: Retrain the emotion detection model with the latest training data.\n\n"
+            "Convert MAT to CSV: Convert a chosen session from a MAT file to a CSV file.\n\n"
+            "Load CSV: Click 'Load CSV' then select a CSV file from a folder to load.\n\n"
+            "Detect Emotion: With a CSV file loaded, click the 'Detect Emotion' button to generate a fast fourier diagram togheter with a power spectral density diagram and to get the emotion for the respective CSV file.\n"
+
         ))
         text.config(state='disabled')  # Make the text widget read-only
         text.pack(expand=True, fill='both', padx=10, pady=10)
@@ -347,6 +345,29 @@ class CsvLoaderApp:
         # Apply the calculated position and size to the child window
         child_window.geometry(f"{width}x{height}+{x}+{y}")
 
+    def retrain_model(self):
+            # Load the data for training (you need to provide the correct path and logic to load your training data)
+            data = self.detector.load_data('playground/model_training/processed_eeg_data_opt_old.pkl')
+            features = [DataFrame(numpy.array(feature).T) for feature in data['features']]
+            labels = data['labels']
+            X = numpy.array(self.detector.preprocess_data(features))
+            y = numpy.array(labels)
+            
+            # Retrain the model
+            self.detector.train_model(X, y)
+            
+            # Reload the updated model
+            self.detector.load_model("processed_eeg_data.pkl")
+
+            # Update the accuracy label
+            with open('accuracy.json', 'r') as f:
+                data = json.load(f)
+                accuracy = data['accuracy']    
+            accuracy_text = f"{accuracy:.2%}"
+            self.accuracy_value_label.config(text=accuracy_text)
+            
+            # Notify the user
+            messagebox.showinfo("Success", "Model retrained successfully.")
 
 # Create the Tkinter window
 root = Tk()

@@ -5,7 +5,7 @@ from sklearn.preprocessing import MinMaxScaler
 from sklearn.decomposition import PCA
 from imblearn.over_sampling import SMOTE
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report, accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
+from sklearn.metrics import classification_report, accuracy_score, precision_recall_fscore_support
 from sklearn.svm import SVC
 import json
 
@@ -44,14 +44,16 @@ class EmotionDetector:
 
         # print("Number of components retained:", self.pca.n_components_)
 
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=51)
-        
+        # X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=51)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3)
 
 
         # Print class distribution before SMOTE
         # print("Class distribution before SMOTE:", np.bincount(y_train))
 
-        smote = SMOTE(random_state=51)
+        # smote = SMOTE(random_state=51)
+        smote = SMOTE()
+
         X_train_smote, y_train_smote = smote.fit_resample(X_train, y_train)
         
         # Print class distribution after SMOTE
@@ -62,14 +64,17 @@ class EmotionDetector:
 
         y_pred = self.model.predict(X_test)
         accuracy = accuracy_score(y_test, y_pred)
+        precision, recall, fscore, _ = precision_recall_fscore_support(y_test, y_pred, average='weighted')
 
         with open('accuracy.json', 'w') as f:
             json.dump({'accuracy': accuracy}, f)
 
         print("Accuracy:", accuracy)
-        print(classification_report(y_test, y_pred))
+        # print(classification_report(y_test, y_pred))
 
-        self.save_model("processed_eeg_data.pkl")
+        # self.save_model("processed_eeg_data.pkl")
+
+        return accuracy, precision, recall, fscore
 
     def save_model(self, file_path):
         with open(file_path, 'wb') as f:
@@ -80,18 +85,48 @@ class EmotionDetector:
             self.scaler, self.pca, self.model = pickle.load(f)
 
     def predict_emotion(self, data):
-        # data_normalized = self.scaler.transform([data])
-        # data_reduced = self.pca.transform(data_normalized)
         prediction = self.model.predict(data)[0]
         
         return prediction
 
+    def multiple_trainings(self, detector, data, repetitions=100):
+        accuracies = []
+        precisions = []
+        recalls = []
+        fscores = []
+        
+        features = [pd.DataFrame(np.array(feature).T) for feature in data['features']]
+        labels = data['labels']
+        X = np.array(detector.preprocess_data(features))
+        y = np.array(labels)
+
+        for _ in range(repetitions):
+            accuracy, precision, recall, fscore = detector.train_model(X, y)
+            accuracies.append(accuracy)
+            precisions.append(precision)
+            recalls.append(recall)
+            fscores.append(fscore)
+
+        # Calculate the average of each metric
+        avg_accuracy = np.mean(accuracies)
+        avg_precision = np.mean(precisions)
+        avg_recall = np.mean(recalls)
+        avg_fscore = np.mean(fscores)
+
+        print(f"Average Accuracy: {avg_accuracy:.2f}")
+        print(f"Average Precision: {avg_precision:.2f}")
+        print(f"Average Recall: {avg_recall:.2f}")
+        print(f"Average F1-Score: {avg_fscore:.2f}")
+
+        return avg_accuracy, avg_precision, avg_recall, avg_fscore
+
 
 if __name__ == "__main__":
     detector = EmotionDetector()
-    data = detector.load_data('/home/alex/UVT/Thesis/playground/model_training/processed_eeg_data_opt_old.pkl')
+    data = detector.load_data('/home/alex/UVT/Thesis/playground/model_training/processed_eeg_data_opt.pkl')
     features = [pd.DataFrame(np.array(feature).T) for feature in data['features']]
     labels = data['labels']
     X = np.array(detector.preprocess_data(features))
     y = np.array(labels)
     detector.train_model(X, y)
+    detector.multiple_trainings(detector, data, 100)
