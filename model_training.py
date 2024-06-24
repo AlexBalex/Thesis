@@ -77,7 +77,7 @@ class EmotionDetector:
 
 if __name__ == "__main__":
     detector = EmotionDetector()
-    data = detector.load_data('/home/alex/UVT/Thesis/playground/model_training/processed_eeg_data_opt.pkl')
+    data = detector.load_data('/home/alex/UVT/thesis/feature_extraction.pkl')
     features = [pd.DataFrame(np.array(feature).T) for feature in data['features']]
     labels = data['labels']
     X = np.array(detector.preprocess_data(features))

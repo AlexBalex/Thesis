@@ -56,6 +56,12 @@ class CsvLoaderApp:
         self.accuracy_label = Label(control_frame, text="Accuracy:")
         self.accuracy_label.grid(row=1, column=0, columnspan=2, sticky='e')
 
+        # Check if the file exists
+        if not os.path.isfile('accuracy.json'):
+            default_data = {"accuracy": 0.0}
+            with open('accuracy.json', 'w') as f:
+                json.dump(default_data, f)
+
         with open('accuracy.json', 'r') as f:
             data = json.load(f)
             accuracy = data['accuracy']    
@@ -92,7 +98,7 @@ class CsvLoaderApp:
         self.toolbar.update()
    
     def load_csv(self):
-        file_path = filedialog.askopenfilename(initialdir='/home/alex/UVT/Thesis/csv_files',filetypes=[("CSV files", "*.csv")],title="Open CSV File")
+        file_path = filedialog.askopenfilename(initialdir='/home/alex/UVT/thesis/',filetypes=[("CSV files", "*.csv")],title="Open CSV File")
         if file_path: 
             # Stop existing animation
             if self.animation is not None and self.animation.event_source is not None:
@@ -188,8 +194,8 @@ class CsvLoaderApp:
             self.emotion_field.config(text=chosen_emotion, fg=emotion_color.get(chosen_emotion, 'black'))
 
     def convert_mat_to_csv(self):
-        mat_files_dir = '/home/alex/UVT/Thesis/mat_files'
-        csv_files_dir = '/home/alex/UVT/Thesis/csv_files'
+        mat_files_dir = '/home/alex/UVT/thesis/'
+        csv_files_dir = '/home/alex/UVT/thesis/'
         
         file_path = filedialog.askopenfilename(initialdir=mat_files_dir,
                                             filetypes=[("MAT-files", "*.mat")],
@@ -283,7 +289,7 @@ class CsvLoaderApp:
         child_window.geometry(f"{width}x{height}+{x}+{y}")
 
     def retrain_model(self):
-            data = self.detector.load_data('playground/model_training/processed_eeg_data_opt_old.pkl')
+            data = self.detector.load_data('feature_extraction/processed_eeg_data_opt_old.pkl')
             features = [DataFrame(numpy.array(feature).T) for feature in data['features']]
             labels = data['labels']
             X = numpy.array(self.detector.preprocess_data(features))

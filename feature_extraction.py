@@ -191,7 +191,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 if __name__ == "__main__":
-    base_dir = '/home/alex/UVT/Thesis/csv_files'
+    base_dir = '/home/alex/UVT/thesis/csv_files'
     results = gather_data(base_dir)
     shuffle_and_save(results, 'extracted_features.pkl')
 

@@ -11,3 +11,4 @@ mat_files
 __pycache__
 processed_eeg_data.pkl
 accuracy.json
+feature_extraction
