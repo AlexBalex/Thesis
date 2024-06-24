@@ -8,8 +8,7 @@ from scipy.stats import skew, kurtosis
 from scipy.fft import fft
 from tqdm import tqdm
 
-epsilon = 1e-12  
-
+epsilon = 1e-12  # small value to avoid null values
 
 def euclidean_distance(x, y):
     return np.sqrt(np.sum((x - y) ** 2))
@@ -116,7 +115,6 @@ def extract_statistics(window):
     
     return stats
 
-# Apply sliding windows and extract statistics
 def process_eeg_data(df, selected_sensors, original_frequency=1000, new_frequency=200):
     df_selected = df.iloc[:, selected_sensors]
 
@@ -124,15 +122,13 @@ def process_eeg_data(df, selected_sensors, original_frequency=1000, new_frequenc
     shift_value = np.abs(np.min(df_selected.values))
     df_selected = df_selected + shift_value
 
-    # Resample the data to 200Hz using Fourier-based method
+    # Resample the data to 200Hz
     num_samples = len(df_selected)
     new_num_samples = int(num_samples * new_frequency / original_frequency)
     resampled_data = resample(df_selected, new_num_samples)
 
-    # Create a DataFrame for the resampled data
     df_resampled = pd.DataFrame(resampled_data, columns=['TP7', 'FP1', 'FP2', 'TP8'])
 
-    # Define sliding window parameters
     window_length = 200  # 1 second window for 200Hz data
     overlap = 100  # 0.5 second overlap
     step = window_length - overlap
@@ -143,23 +139,18 @@ def process_eeg_data(df, selected_sensors, original_frequency=1000, new_frequenc
         window = df_resampled.iloc[start:start + window_length]
         statistics.append(extract_statistics(window))
 
-    # Convert the statistics to a DataFrame
     df_statistics = pd.DataFrame(statistics)
 
     return df_statistics
 
-# Function to load data, process it, and return the features
 def load_data_and_process(file_path, selected_sensors=[3, 4, 32, 40]):
     df = pd.read_csv(file_path)
     df_statistics = process_eeg_data(df, selected_sensors)
     return df_statistics
 
-# Function to gather data
 def gather_data(base_dir):
-    # emotions: 0 - neutral, 1 - sad, 2 - fear, 3 - happy
     sessions_labels = {
         '1': [1, 2, 3, 0, 2, 0, 0, 1, 0, 1, 2, 1, 1, 1, 2, 3, 2, 2, 3, 3, 0, 3, 0, 3], 
-         #for 2: pos1 fear pos5 happy pos12 neutral pos7 sad
         '2': [2, 1, 3, 0, 0, 2, 0, 2, 3, 3, 2, 3, 2, 0, 1, 1, 2, 1, 0, 3, 0, 1, 3, 1],
         '3': [1, 2, 2, 1, 3, 3, 3, 1, 1, 2, 1, 0, 2, 3, 3, 0, 2, 3, 0, 0, 2, 0, 1, 0]
     }
@@ -167,17 +158,14 @@ def gather_data(base_dir):
 
 
 
-    # Wrap the outer loop with tqdm for session directories
     for session in tqdm(sorted(os.listdir(base_dir)), desc="Sessions", position=2):
         session_dir = os.path.join(base_dir, session)
         if os.path.isdir(session_dir):
             labels = sessions_labels[session]
-            # Wrap the middle loop with tqdm for EEG folders
             eeg_folders = os.listdir(session_dir)
             for i, eeg_folder in tqdm(enumerate(sorted(eeg_folders)), desc="EEG folders", total=len(eeg_folders), leave=False, position=0):
                 eeg_dir = os.path.join(session_dir, eeg_folder)
                 if os.path.isdir(eeg_dir):
-                    # Wrap the innermost loop with tqdm for files within each EEG folder
                     files = os.listdir(eeg_dir)
                     for file in tqdm(sorted(files), desc="Files", total=len(files), leave=False, position=1):
                         if file.endswith('.csv'):
@@ -187,13 +175,12 @@ def gather_data(base_dir):
 
     return results
 
-# Function to shuffle and save the results
 def shuffle_and_save(results, output_file):
     tqdm.write("Shuffling data...")
     random.shuffle(results)
     tqdm.write("Saving data...")
     data = {
-        'features': [result[:-1] for result in results],  # all except the last element (label)
+        'features': [result[:-1] for result in results],
         'labels': [result[-1] for result in results]
     }
     with open(output_file, 'wb') as f:
@@ -206,5 +193,5 @@ warnings.filterwarnings("ignore")
 if __name__ == "__main__":
     base_dir = '/home/alex/UVT/Thesis/csv_files'
     results = gather_data(base_dir)
-    shuffle_and_save(results, 'processed_eeg_data_opt_v2.pkl')
+    shuffle_and_save(results, 'extracted_features.pkl')
 
